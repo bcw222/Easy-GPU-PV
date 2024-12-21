@@ -1,27 +1,24 @@
 ﻿$params = @{
-    VMName = "GPUPV"
-    SourcePath = "C:\Users\james\Downloads\Win11_English_x64.iso"
-    Edition    = 6
-    VhdFormat  = "VHDX"
-    DiskLayout = "UEFI"
-    SizeBytes  = 40GB
-    MemoryAmount = 8GB
-    CPUCores = 4
-    NetworkSwitch = "Default Switch"
-    VHDPath = "C:\Users\Public\Documents\Hyper-V\Virtual Hard Disks\"
-    UnattendPath = "$PSScriptRoot"+"\autounattend.xml"
-    GPUName = "AUTO"
-    GPUResourceAllocationPercentage = 50
-    Team_ID = ""
-    Key = ""
-    Username = "GPUVM"
-    Password = "CoolestPassword!"
-    Autologon = "true"
+    VMName = "GPUPV" # Name of the VM in Hyper-V and the computername / hostname.
+    SourcePath = "$PSScriptRoot"+"\Windows_Installation_Image.iso" # Path to the Windows installation image.
+    Edition = 4 # Windows edition index. You can check your wim by `Dism.exe /Get-WimInfo /WimFile:<your wim file path>`.
+    DiskLayout = "UEFI" # Either `BIOS` or `UEFI`. Leave as UEFI for Windows 11.
+    SizeBytes = 40GB # Size of the virtual hard disk.
+    MemoryAmount = 8GB # Amount of memory to allocate to the VM.
+    CPUCores = 4 # Number of CPU cores to allocate to the VM.
+    NetworkSwitch = "Default Switch" # Name of the network switch to connect the VM to.
+    VHDPath = "C:\ProgramData\Microsoft\Windows\Virtual Hard Disks\" # Path to the folder where the virtual hard disk will be stored. Must already exist.
+    UnattendPath = "$PSScriptRoot"+"\autounattend.xml" # Path to the unattend.xml file for unattended installation.
+    GPUName = "AUTO" # Name of the GPU to partition. Must be AUTO on Windows 10.
+    GPUResourceAllocationPercentage = 50 # Percentage of GPU resources to allocate to the VM.
+    Username = "User" # The VM Windows Username, do not include special characters, and must be different from the "VMName" value you set
+    Password = "changeme" # The VM Windows Password; can't be blank.
+    autologon = "false" # Enable autologon for the VM.
 }
 
 Import-Module $PSSCriptRoot\Add-VMGpuPartitionAdapterFiles.psm1
 
-function Is-Administrator  
+function Get-IsAdministrator
 {  
     $CurrentUser = [Security.Principal.WindowsIdentity]::GetCurrent();
     (New-Object Security.Principal.WindowsPrincipal $CurrentUser).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)  
@@ -31,7 +28,7 @@ Function Dismount-ISO {
 param (
 [string]$SourcePath
 )
-$disk = Get-Volume | Where-Object {$_.DriveType -eq "CD-ROM"} | select *
+$disk = Get-Volume | Where-Object {$_.DriveType -eq "CD-ROM"} | Select-Object *
 Foreach ($d in $disk) {
     Dismount-DiskImage -ImagePath $sourcePath | Out-Null
     }
@@ -48,18 +45,18 @@ Do {
         Function Get-NewDriveLetter {
             $UsedDriveLetters = ((Get-Volume).DriveLetter) -join ""
              Do {
-                $DriveLetter = (65..90)| Get-Random | % {[char]$_}
+                $DriveLetter = (65..90)| Get-Random | ForEach-Object {[char]$_}
                 }
             Until (!$UsedDriveLetters.Contains("$DriveLetter"))
             $DriveLetter
             }
         $DriveLetter = "$(Get-NewDriveLetter)" +  ":"
-        Get-WmiObject -Class Win32_volume | Where-Object {$_.Label -eq "CCCOMA_X64FRE_EN-US_DV9"} | Set-WmiInstance -Arguments @{DriveLetter="$driveletter"}
+        Get-WmiObject -Class Win32_volume | Where-Object {$_.Label -like "CCCOMA_X64FRE_*_DV9"} | Set-WmiInstance -Arguments @{DriveLetter="$driveletter"}
         }
     Start-Sleep -s 1 
     $delay++
     }
-Until (($mountResult | Get-Volume).DriveLetter -ne $NULL)
+Until ($NULL -ne ($mountResult | Get-Volume).DriveLetter)
 ($mountResult | Get-Volume).DriveLetter
 }
 
@@ -70,10 +67,10 @@ param(
 [string]$VMName
 )
 if ($VHDPath[-1] -eq '\') {
-    $VHDPath + $VMName + ".vhdx"
+    $VHDPath + "$VMName" + ".vhdx"
     }
 Else {
-    $VHDPath + "\" +  $VMName + ".vhdx"
+    $VHDPath + "\" +  "$VMName" + ".vhdx"
     }
 }
 
@@ -99,14 +96,14 @@ else{
     }
 }
 
-Function Check-Params {
+Function Get-IsParamsValid {
 
 $ExitReason = @()
 
-if ([ENVIRONMENT]::Is64BitProcess -eq $false) {
+if (!([ENVIRONMENT]::Is64BitProcess)) {
     $ExitReason += "You are not using the correct version of Powershell, do not use Powershell(x86)."
     }
-if ((Is-Administrator) -eq $false) {
+if (!(Get-IsAdministrator)) {
     $ExitReason += "Script not running as Administrator, please run script as Administrator."
     }
 if (!(Test-Path $params.VHDPath)) {
@@ -143,42 +140,6 @@ If ($ExitReason.Count -gt 0) {
     }
 }
 
-Function Setup-ParsecInstall {
-param(
-[string]$DriveLetter,
-[string]$Team_ID,
-[string]$Key
-)
-    $new = @()
-
-    $content = get-content "$PSScriptRoot\user\psscripts.ini" 
-
-    foreach ($line in $content) {
-        if ($line -like "0Parameters="){
-            $line = "0Parameters=$Team_ID $Key"
-            $new += $line
-            }
-        Else {
-            $new += $line
-            }
-    }
-    Set-Content -Value $new -Path "$PSScriptRoot\user\psscripts.ini"
-    if((Test-Path -Path $DriveLetter\Windows\system32\GroupPolicy\User\Scripts\Logon) -eq $true) {} Else {New-Item -Path $DriveLetter\Windows\system32\GroupPolicy\User\Scripts\Logon -ItemType directory | Out-Null}
-    if((Test-Path -Path $DriveLetter\Windows\system32\GroupPolicy\User\Scripts\Logoff) -eq $true) {} Else {New-Item -Path $DriveLetter\Windows\system32\GroupPolicy\User\Scripts\Logoff -ItemType directory | Out-Null}
-    if((Test-Path -Path $DriveLetter\Windows\system32\GroupPolicy\Machine\Scripts\Startup) -eq $true) {} Else {New-Item -Path $DriveLetter\Windows\system32\GroupPolicy\Machine\Scripts\Startup -ItemType directory | Out-Null}
-    if((Test-Path -Path $DriveLetter\Windows\system32\GroupPolicy\Machine\Scripts\Shutdown) -eq $true) {} Else {New-Item -Path $DriveLetter\Windows\system32\GroupPolicy\Machine\Scripts\Shutdown -ItemType directory | Out-Null}
-    if((Test-Path -Path $DriveLetter\ProgramData\Easy-GPU-P) -eq $true) {} Else {New-Item -Path $DriveLetter\ProgramData\Easy-GPU-P -ItemType directory | Out-Null}
-    Copy-Item -Path $psscriptroot\VMScripts\VDDMonitor.ps1 -Destination $DriveLetter\ProgramData\Easy-GPU-P
-    Copy-Item -Path $psscriptroot\VMScripts\VBCableInstall.ps1 -Destination $DriveLetter\ProgramData\Easy-GPU-P
-    Copy-Item -Path $psscriptroot\VMScripts\ParsecVDDInstall.ps1 -Destination $DriveLetter\ProgramData\Easy-GPU-P
-    Copy-Item -Path $psscriptroot\VMScripts\ParsecPublic.cer -Destination $DriveLetter\ProgramData\Easy-GPU-P
-    Copy-Item -Path $psscriptroot\VMScripts\Parsec.lnk -Destination $DriveLetter\ProgramData\Easy-GPU-P
-    Copy-Item -Path $psscriptroot\gpt.ini -Destination $DriveLetter\Windows\system32\GroupPolicy
-    Copy-Item -Path $psscriptroot\User\psscripts.ini -Destination $DriveLetter\Windows\system32\GroupPolicy\User\Scripts
-    Copy-Item -Path $psscriptroot\User\Install.ps1 -Destination $DriveLetter\Windows\system32\GroupPolicy\User\Scripts\Logon
-    Copy-Item -Path $psscriptroot\Machine\psscripts.ini -Destination $DriveLetter\Windows\system32\GroupPolicy\Machine\Scripts
-    Copy-Item -Path $psscriptroot\Machine\Install.ps1 -Destination $DriveLetter\Windows\system32\GroupPolicy\Machine\Scripts\Startup
-}
 
 function Convert-WindowsImage {
     <#
@@ -269,9 +230,9 @@ function Convert-WindowsImage {
     .PARAMETER Driver
         Full path to driver(s) (.inf files) to inject to the OS inside the VHD(x).
 
-    .PARAMETER ExpandOnNativeBoot
+    .PARAMETER NoExpandOnNativeBoot
         Specifies whether to expand the VHD(x) to its maximum suze upon native boot.
-        The default is True. Set to False to disable expansion.
+        The default is False. Set to True to disable expansion.
 
     .PARAMETER RemoteDesktopEnable
         Enable Remote Desktop to connect to the OS inside the VHD(x) upon provisioning.
@@ -375,18 +336,6 @@ function Convert-WindowsImage {
         [string]$GPUName,
 
         [Parameter(ParameterSetName="SRC")]
-        [Alias("TeamID")]
-        [string]
-        #[ValidateNotNullOrEmpty()]
-        [string]$Team_ID,
-
-        [Parameter(ParameterSetName="SRC")]
-        [Alias("Teamkey")]
-        [string]
-        #[ValidateNotNullOrEmpty()]
-        [string]$Key,
-
-        [Parameter(ParameterSetName="SRC")]
         [switch]
         $CacheSource = $false,
 
@@ -479,7 +428,7 @@ function Convert-WindowsImage {
 
         [Parameter(ParameterSetName="SRC")]
         [switch]
-        $ExpandOnNativeBoot = $true,
+        $NoExpandOnNativeBoot = $false,
 
         [Parameter(ParameterSetName="SRC")]
         [switch]
@@ -1028,8 +977,7 @@ You can use the fields below to configure the VHD or VHDX that you want to creat
 
         ##########################################################################################
 
-        function
-        Run-Executable
+        function Run-Executable
         {
             <#
                 .SYNOPSIS
@@ -1171,10 +1119,10 @@ You can use the fields below to configure the VHD or VHDX that you want to creat
             # Create log folder
             if (Test-Path $logFolder)
             {
-                $null = rd $logFolder -Force -Recurse
+                $null = Remove-Item $logFolder -Force -Recurse
             }
 
-            $null = md $logFolder -Force
+            $null = mkdir $logFolder -Force
 
             # Try to start transcripting.  If it's already running, we'll get an exception and swallow it.
             try
@@ -1263,7 +1211,7 @@ You can use the fields below to configure the VHD or VHDX that you want to creat
 
                     if ($ret -ilike "ok")
                     {
-                        $WorkingDirectory = $txtWorkingDirectory = $openFolderDialog1.SelectedPath
+                        $WorkingDirectory = $openFolderDialog1.SelectedPath
                         Write-W2VInfo "Selected Working Directory is $WorkingDirectory..."
                     }
                 }
@@ -1364,7 +1312,7 @@ You can use the fields below to configure the VHD or VHDX that you want to creat
                             }
                             else
                             {
-                                $tempOpenWim.Images | %{ $cmbSkuList.Items.Add($_.ImageFlags) }
+                                $tempOpenWim.Images | ForEach-Object{ $cmbSkuList.Items.Add($_.ImageFlags) }
                                 $cmbSkuList.SelectedIndex = 0
                             }
 
@@ -2043,7 +1991,7 @@ You can use the fields below to configure the VHD or VHDX that you want to creat
             {
                 Write-W2VError "The specified edition does not appear to exist in the specified WIM."
                 Write-W2VError "Valid edition names are:"
-                $openWim.Images | %{ Write-W2VError "  $($_.ImageFlags)" }
+                $openWim.Images | ForEach-Object{ Write-W2VError "  $($_.ImageFlags)" }
                 throw
             }
 
@@ -2439,7 +2387,7 @@ You can use the fields below to configure the VHD or VHDX that you want to creat
                 Write-W2VInfo "Image applied. It is not bootable."
             }
 
-            if ($RemoteDesktopEnable -or (-not $ExpandOnNativeBoot))
+            if ($RemoteDesktopEnable -or ($NoExpandOnNativeBoot))
             {
                 $hive = Mount-RegistryHive -Hive (Join-Path $windowsDrive "Windows\System32\Config\System")
 
@@ -2449,7 +2397,7 @@ You can use the fields below to configure the VHD or VHDX that you want to creat
                     Set-ItemProperty -Path "HKLM:\$($hive)\ControlSet001\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
                 }
 
-                if (-not $ExpandOnNativeBoot)
+                if ($NoExpandOnNativeBoot)
                 {
                     Write-W2VInfo -text "Disabling automatic $VHDFormat expansion for Native Boot"
                     Set-ItemProperty -Path "HKLM:\$($hive)\ControlSet001\Services\FsDepends\Parameters" -Name "VirtualDiskExpandOnMount" -Value 4
@@ -2492,9 +2440,6 @@ You can use the fields below to configure the VHD or VHDX that you want to creat
             if (($GPUName)) {
             Add-VMGpuPartitionAdapterFiles -GPUName $GPUName -DriveLetter $windowsDrive
             }
-
-            Write-W2VInfo "Setting up Parsec to install at boot"
-            Setup-ParsecInstall -DriveLetter $WindowsDrive -Team_ID $team_id -Key $key
 
             if ($DiskLayout -eq "UEFI")
             {
@@ -2577,14 +2522,14 @@ You can use the fields below to configure the VHD or VHDX that you want to creat
         finally
         {
             # If we still have a WIM image open, close it.
-            if ($openWim -ne $null)
+            if ($null -ne $openWim)
             {
                 Write-W2VInfo "Closing Windows image..."
                 $openWim.Close()
             }
 
             # If we still have a registry hive mounted, dismount it.
-            if ($mountedHive -ne $null)
+            if ($null -ne $mountedHive)
             {
                 Write-W2VInfo "Closing registry hive..."
                 Dismount-RegistryHive -HiveMountPoint $mountedHive
@@ -2607,7 +2552,7 @@ You can use the fields below to configure the VHD or VHDX that you want to creat
             }
 
             # If we still have an ISO open, close it.
-            if ($openIso -ne $null)
+            if ($null -ne $openIso)
             {
                 Write-W2VInfo "Closing ISO..."
                 Dismount-DiskImage $ISOPath
@@ -4288,7 +4233,7 @@ VirtualHardDisk
     }
 }
 
-Function Modify-AutoUnattend {
+Function Edit-AutoUnattend {
 param (
 [string]$username,
 [string]$password,
@@ -4308,7 +4253,7 @@ param (
     $xml.Save("$UnattendPath")
 }
 
-function Assign-VMGPUPartitionAdapter {
+function Edit-VMGPUPartitionAdapter {
 param(
 [string]$VMName,
 [string]$GPUName,
@@ -4318,20 +4263,20 @@ param(
     $PartitionableGPUList = Get-WmiObject -Class "Msvm_PartitionableGpu" -ComputerName $env:COMPUTERNAME -Namespace "ROOT\virtualization\v2" 
     if ($GPUName -eq "AUTO") {
         $DevicePathName = $PartitionableGPUList.Name[0]
-        Add-VMGpuPartitionAdapter -VMName $VMName
+        Add-VMGpuPartitionAdapter -VMName "$VMName"
         }
     else {
-        $DeviceID = ((Get-WmiObject Win32_PNPSignedDriver | where {($_.Devicename -eq "$GPUNAME")}).hardwareid).split('\')[1]
+        $DeviceID = ((Get-WmiObject Win32_PNPSignedDriver | Where-Object {($_.Devicename -eq "$GPUNAME")}).hardwareid).split('\')[1]
         $DevicePathName = ($PartitionableGPUList | Where-Object name -like "*$deviceid*").Name
-        Add-VMGpuPartitionAdapter -VMName $VMName -InstancePath $DevicePathName
+        Add-VMGpuPartitionAdapter -VMName "$VMName" -InstancePath $DevicePathName
         }
 
     [float]$devider = [math]::round($(100 / $GPUResourceAllocationPercentage),2)
 
-    Set-VMGpuPartitionAdapter -VMName $VMName -MinPartitionVRAM ([math]::round($(1000000000 / $devider))) -MaxPartitionVRAM ([math]::round($(1000000000 / $devider))) -OptimalPartitionVRAM ([math]::round($(1000000000 / $devider)))
-    Set-VMGPUPartitionAdapter -VMName $VMName -MinPartitionEncode ([math]::round($(18446744073709551615 / $devider))) -MaxPartitionEncode ([math]::round($(18446744073709551615 / $devider))) -OptimalPartitionEncode ([math]::round($(18446744073709551615 / $devider)))
-    Set-VMGpuPartitionAdapter -VMName $VMName -MinPartitionDecode ([math]::round($(1000000000 / $devider))) -MaxPartitionDecode ([math]::round($(1000000000 / $devider))) -OptimalPartitionDecode ([math]::round($(1000000000 / $devider)))
-    Set-VMGpuPartitionAdapter -VMName $VMName -MinPartitionCompute ([math]::round($(1000000000 / $devider))) -MaxPartitionCompute ([math]::round($(1000000000 / $devider))) -OptimalPartitionCompute ([math]::round($(1000000000 / $devider)))
+    Set-VMGpuPartitionAdapter -VMName "$VMName" -MinPartitionVRAM ([math]::round($(1000000000 / $devider))) -MaxPartitionVRAM ([math]::round($(1000000000 / $devider))) -OptimalPartitionVRAM ([math]::round($(1000000000 / $devider)))
+    Set-VMGPUPartitionAdapter -VMName "$VMName" -MinPartitionEncode ([math]::round($(18446744073709551615 / $devider))) -MaxPartitionEncode ([math]::round($(18446744073709551615 / $devider))) -OptimalPartitionEncode ([math]::round($(18446744073709551615 / $devider)))
+    Set-VMGpuPartitionAdapter -VMName "$VMName" -MinPartitionDecode ([math]::round($(1000000000 / $devider))) -MaxPartitionDecode ([math]::round($(1000000000 / $devider))) -OptimalPartitionDecode ([math]::round($(1000000000 / $devider)))
+    Set-VMGpuPartitionAdapter -VMName "$VMName" -MinPartitionCompute ([math]::round($(1000000000 / $devider))) -MaxPartitionCompute ([math]::round($(1000000000 / $devider))) -OptimalPartitionCompute ([math]::round($(1000000000 / $devider)))
 
 }
 
@@ -4350,58 +4295,51 @@ param(
 [string]$GPUName,
 [float]$GPUResourceAllocationPercentage,
 [string]$SourcePath,
-[string]$Team_ID,
-[string]$Key,
 [string]$username,
 [string]$password,
 [string]$autologon
 )
-    $VHDPath = ConcatenateVHDPath -VHDPath $VHDPath -VMName $VMName
+    $VHDPath = ConcatenateVHDPath -VHDPath $VHDPath -VMName "$VMName"
     $DriveLetter = Mount-ISOReliable -SourcePath $SourcePath
 
-    if ($(Get-VM -Name $VMName -ErrorAction SilentlyContinue) -ne $NULL) {
-        SmartExit -ExitReason "Virtual Machine already exists with name $VMName, please delete existing VM or change VMName"
+    if ($NULL -ne $(Get-VM -Name "$VMName" -ErrorAction SilentlyContinue)) {
+        SmartExit -ExitReason "Virtual Machine already exists with name "$VMName", please delete existing VM or change VMName"
         }
     if (Test-Path $vhdPath) {
         SmartExit -ExitReason "Virtual Machine Disk already exists at $vhdPath, please delete existing VHDX or change VMName"
         }
-    Modify-AutoUnattend -username "$username" -password "$password" -autologon $autologon -hostname $VMName -UnattendPath $UnattendPath
+    Edit-AutoUnattend -username "$username" -password "$password" -autologon $autologon -hostname "$VMName" -UnattendPath $UnattendPath
     $MaxAvailableVersion = (Get-VMHostSupportedVersion).Version | Where-Object {$_.Major -lt 254}| Select-Object -Last 1 
-    Convert-WindowsImage -SourcePath $SourcePath -ISODriveLetter $DriveLetter -Edition $Edition -VHDFormat $Vhdformat -VHDPath $VhdPath -DiskLayout $DiskLayout -UnattendPath $UnattendPath -GPUName $GPUName -Team_ID $Team_ID -Key $Key -SizeBytes $SizeBytes| Out-Null
+    Convert-WindowsImage -SourcePath $SourcePath -ISODriveLetter $DriveLetter -Edition $Edition -VHDPath $VhdPath -DiskLayout $DiskLayout -UnattendPath $UnattendPath -GPUName $GPUName -SizeBytes $SizeBytes | Out-Null
     if (Test-Path $vhdPath) {
-        New-VM -Name $VMName -MemoryStartupBytes $MemoryAmount -VHDPath $VhdPath -Generation 2 -SwitchName $NetworkSwitch -Version $MaxAvailableVersion | Out-Null
-        Set-VM -Name $VMName -ProcessorCount $CPUCores -CheckpointType Disabled -LowMemoryMappedIoSpace 3GB -HighMemoryMappedIoSpace 32GB -GuestControlledCacheTypes $true -AutomaticStopAction ShutDown
-        Set-VMMemory -VMName $VMName -DynamicMemoryEnabled $false 
+        New-VM -Name "$VMName" -MemoryStartupBytes $MemoryAmount -VHDPath $VhdPath -Generation 2 -SwitchName $NetworkSwitch -Version $MaxAvailableVersion | Out-Null
+        Set-VM -Name "$VMName" -ProcessorCount $CPUCores -LowMemoryMappedIoSpace 3GB -HighMemoryMappedIoSpace 32GB -GuestControlledCacheTypes $true -AutomaticStopAction ShutDown -CheckpointType Production
+        Set-VMMemory -VMName "$VMName" -DynamicMemoryEnabled $false 
         $CPUManufacturer = Get-CimInstance -ClassName Win32_Processor | Foreach-Object Manufacturer
         $BuildVer = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
         if (($BuildVer.CurrentBuild -lt 22000) -and ($CPUManufacturer -eq "AuthenticAMD")) {
             }
         Else {
-            Set-VMProcessor -VMName $VMName -ExposeVirtualizationExtensions $true
+            Set-VMProcessor -VMName "$VMName" -ExposeVirtualizationExtensions $true
             }
-        Set-VMHost -ComputerName $ENV:Computername -EnableEnhancedSessionMode $false
-        Set-VMVideo -VMName $VMName -HorizontalResolution 1920 -VerticalResolution 1080
-        Set-VMKeyProtector -VMName $VMName -NewLocalKeyProtector
-        Enable-VMTPM -VMName $VMName 
-        Add-VMDvdDrive -VMName $VMName -Path $SourcePath
-        Assign-VMGPUPartitionAdapter -GPUName $GPUName -VMName $VMName -GPUResourceAllocationPercentage $GPUResourceAllocationPercentage
+        Set-VMKeyProtector -VMName "$VMName" -NewLocalKeyProtector
+        Enable-VMTPM -VMName "$VMName" 
+        Add-VMDvdDrive -VMName "$VMName" -Path $SourcePath
+        Edit-VMGPUPartitionAdapter -GPUName $GPUName -VMName "$VMName" -GPUResourceAllocationPercentage $GPUResourceAllocationPercentage
         Write-Host "INFO   : Starting and connecting to VM"
-        vmconnect localhost $VMName
+        vmconnect localhost "$VMName"
         }
     else {
     SmartExit -ExitReason "Failed to create VHDX, stopping script"
     }
 }
 
-Check-Params @params
+Get-IsParamsValid @params
 
 New-GPUEnabledVM @params
 
 Start-VM -Name $params.VMName
 
 SmartExit -ExitReason "If all went well the Virtual Machine will have started, 
-In a few minutes it will load the Windows desktop, 
-when it does, sign into Parsec (a fast remote desktop app)
-and connect to the machine using Parsec from another computer. 
-Have fun!
-Sign up to Parsec at https://parsec.app"
+In a few minutes it will load the Windows desktop. 
+Have fun!"
